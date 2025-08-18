@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Extraer frames → ZIP (Pixel reducido)</title>
+  <style>
+    body{margin:0;padding:24px;background:#0b0f14;color:#e6edf3;font-family:sans-serif}
+    .app{max-width:920px;margin:0 auto}
+    .card{background:#101823;border:1px solid #1e2a3a;border-radius:16px;padding:20px}
+    .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+    .stack{display:grid;gap:8px}
+    input,button{padding:8px 10px;border-radius:10px}
+    input[type="file"]{background:#0f1520;border:1px dashed #2b3b54;color:#cbd5e1}
+    input[type="number"]{background:#0f1520;color:#e5e7eb;border:1px solid #273449}
+    button{border:0;background:#ff2fa1;color:white;font-weight:700;cursor:pointer}
+    button[disabled]{opacity:.5}
+    .progress{height:10px;background:#0f1520;border-radius:999px;overflow:hidden;border:1px solid #1f2a3a;margin:12px 0}
+    .bar{height:100%;width:0%;background:#22c55e;transition:width .2s ease}
+    .status{color:#cbd5e1}
+    .log{font-family:monospace;background:#0b111a;border:1px solid #1e2a3a;padding:10px;border-radius:10px;max-height:240px;overflow:auto}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="card">
+      <h1>Extraer frames → ZIP (pixel reducido)</h1>
+      <div class="row" style="margin:12px 0 18px">
+        <div class="stack">
+          <label for="file">Archivo .mp4</label>
+          <input id="file" type="file" accept="video/mp4" />
+        </div>
+        <div class="stack">
+          <label for="fps">FPS</label>
+          <input id="fps" type="number" min="1" max="120" value="60" />
+        </div>
+        <div class="stack">
+          <label for="pxSize">Factor reducción</label>
+          <input id="pxSize" type="number" min="2" max="64" value="8" />
+        </div>
+        <div class="stack">
+          <label>&nbsp;</label>
+          <button id="start" disabled>Procesar</button>
+        </div>
+        <span class="status" id="status">Esperando archivo…</span>
+      </div>
+
+      <div class="progress"><div class="bar" id="bar"></div></div>
+      <div class="log" id="log"></div>
+
+      <video id="video" style="display:none"></video>
+      <canvas id="canvas" style="display:none"></canvas>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script>
+    const $=s=>document.querySelector(s);
+    const fileInput=$('#file'), startBtn=$('#start'), statusEl=$('#status'), bar=$('#bar'),
+          logEl=$('#log'), video=$('#video'), canvas=$('#canvas'), ctx=canvas.getContext('2d');
+
+    let objectUrl=null;
+    fileInput.addEventListener('change',()=>{
+      bar.style.width='0%'; logEl.textContent='';
+      const file=fileInput.files[0]; if(!file) return;
+      if(objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl=URL.createObjectURL(file); video.src=objectUrl;
+      statusEl.textContent=`Cargando ${file.name}…`;
+      video.onloadedmetadata=()=>{ startBtn.disabled=false; statusEl.textContent='Listo'; }
+    });
+
+    startBtn.addEventListener('click', async()=>{
+      startBtn.disabled=true; fileInput.disabled=true;
+      const fps=Math.max(1,Math.min(120,parseInt($('#fps').value)||60));
+      const pxSize=Math.max(2,Math.min(64,parseInt($('#pxSize').value)||8));
+      await processVideo({fps,pxSize});
+    });
+
+    async function processVideo({fps,pxSize}){
+      const wSmall=Math.floor(video.videoWidth/pxSize);
+      const hSmall=Math.floor(video.videoHeight/pxSize);
+      canvas.width=wSmall; canvas.height=hSmall;
+
+      const duration=video.duration, totalFrames=Math.floor(duration*fps);
+      const times=Array.from({length:totalFrames},(_,i)=>i/fps);
+      const zip=new JSZip(), folder=zip.folder('frames');
+
+      for(let i=0;i<times.length;i++){
+        await seekTo(times[i]);
+        ctx.drawImage(video,0,0,wSmall,hSmall);
+        const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.92));
+        folder.file(`frame_${String(i+1).padStart(6,'0')}.jpg`,blob);
+        const pct=Math.round(((i+1)/times.length)*100);
+        bar.style.width=pct+'%'; statusEl.textContent=`${i+1}/${times.length} (${pct}%)`;
+      }
+      const blobZip=await zip.generateAsync({type:'blob'});
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blobZip);
+      a.download='frames_reducidos.zip'; a.click();
+      statusEl.textContent='¡Listo!';
+      fileInput.disabled=false;
+    }
+
+    function seekTo(t){return new Promise((res,rej)=>{
+      video.currentTime=t;
+      video.onseeked=()=>res();
+      video.onerror=e=>rej(e);
+    });}
+  </script>
+</body>
+</html>
